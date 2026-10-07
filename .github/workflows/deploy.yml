@@ -1,0 +1,92 @@
+name: CI/CD
+
+on:
+  push:
+    branches: [dev, main]
+  pull_request:
+    branches: [dev, main]
+
+env:
+  THEME_DIR: wp-content/themes/woodmart-child
+  PLUGIN_DIR: wp-content/plugins/papylon-sync
+
+jobs:
+  build:
+    name: Lint & build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.2'
+
+      - name: PHP syntax check
+        run: |
+          find "$THEME_DIR" "$PLUGIN_DIR" -name '*.php' -not -path '*/node_modules/*' -print0 \
+            | xargs -0 -n1 php -l > /dev/null
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: wp-content/themes/woodmart-child/package-lock.json
+
+      - name: Build theme assets
+        working-directory: wp-content/themes/woodmart-child
+        run: |
+          npm ci
+          npm run build:production
+          rm -rf node_modules
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: wp-content
+          retention-days: 7
+          path: wp-content
+
+  deploy:
+    name: Deploy
+    needs: build
+    # main only deploys once repo variable PRODUCTION_ENABLED = true
+    if: github.event_name == 'push' && (github.ref_name != 'main' || vars.PRODUCTION_ENABLED == 'true')
+    runs-on: ubuntu-latest
+    # dev -> staging, main -> production (add required reviewers on "production")
+    environment: ${{ github.ref_name == 'main' && 'production' || 'staging' }}
+    concurrency: deploy-${{ github.ref_name }}
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: wp-content
+          path: wp-content
+
+      - name: Set up SSH
+        run: |
+          install -m 700 -d ~/.ssh
+          echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/id_deploy
+          chmod 600 ~/.ssh/id_deploy
+          echo "${{ secrets.SSH_KNOWN_HOSTS }}" > ~/.ssh/known_hosts
+
+      - name: Rsync theme and plugin
+        env:
+          SSH: ssh -i ~/.ssh/id_deploy -p ${{ secrets.SSH_PORT || 22 }}
+          DEST: ${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }}:${{ secrets.WP_PATH }}/wp-content
+        run: |
+          rsync -az --delete -e "$SSH" \
+            wp-content/themes/woodmart-child/ "$DEST/themes/woodmart-child/"
+          rsync -az --delete -e "$SSH" \
+            wp-content/plugins/papylon-sync/ "$DEST/plugins/papylon-sync/"
+
+      - name: Post-deploy (flush caches, optional)
+        continue-on-error: true
+        run: |
+          ssh -i ~/.ssh/id_deploy -p ${{ secrets.SSH_PORT || 22 }} \
+            ${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }} \
+            'export PATH="$HOME/bin:$PATH"; command -v wp >/dev/null || { echo "wp-cli not installed, skipping"; exit 0; }; cd ${{ secrets.WP_PATH }} && wp cache flush && wp rewrite flush && (wp litespeed-purge all 2>/dev/null || true)'
+
+      - name: Health check
+        run: |
+          sleep 5
+          code=$(curl -s -o /dev/null -w '%{http_code}' -L "${{ vars.SITE_URL }}")
+          echo "HTTP $code"
+          test "$code" = "200"

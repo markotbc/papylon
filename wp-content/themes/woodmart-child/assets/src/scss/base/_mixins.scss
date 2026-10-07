@@ -1,0 +1,46 @@
+@use 'sass:map';
+
+$breakpoints: (
+  'xs': 420px,
+  'sm': 767px,
+  'md': 1025px,
+  'lg': 1280px
+) !default;
+
+// Min-width (mobile-first approach)
+@mixin min($breakpoint) {
+  @if map.has-key($breakpoints, $breakpoint) {
+    @media (min-width: map.get($breakpoints, $breakpoint)) {
+      @content;
+    }
+  } @else {
+    // If not a key, treat as custom value
+    @media (min-width: $breakpoint) {
+      @content;
+    }
+  }
+}
+
+// Max-width (desktop-first approach)
+@mixin max($breakpoint) {
+  @if map.has-key($breakpoints, $breakpoint) {
+    @media (max-width: #{map.get($breakpoints, $breakpoint) - 1px}) {
+      @content;
+    }
+  } @else {
+    // If not a key, treat as custom value
+    @media (max-width: $breakpoint) {
+      @content;
+    }
+  }
+}
+
+// Between (between two breakpoints)
+@mixin between($min-breakpoint, $max-breakpoint) {
+  $min-value: if(map.has-key($breakpoints, $min-breakpoint), map.get($breakpoints, $min-breakpoint), $min-breakpoint);
+  $max-value: if(map.has-key($breakpoints, $max-breakpoint), map.get($breakpoints, $max-breakpoint), $max-breakpoint);
+  
+  @media (min-width: $min-value) and (max-width: #{$max-value - 1px}) {
+    @content;
+  }
+}

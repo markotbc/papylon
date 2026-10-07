@@ -1,0 +1,25 @@
+# Dependencies / builds
+node_modules/
+wp-content/themes/woodmart-child/assets/dest/css/*
+!wp-content/themes/woodmart-child/assets/dest/css/.gitkeep
+
+# Never commit WordPress core, uploads, config or secrets
+wp-config.php
+.env
+*.sql
+*.sql.gz
+wp-content/uploads/
+wp-content/cache/
+wp-content/upgrade/
+wp-content/index.php
+wp-content/plugins/*
+!wp-content/plugins/papylon-sync/
+wp-content/themes/*
+!wp-content/themes/woodmart-child/
+
+# OS / IDE
+.DS_Store
+.idea/
+.vscode/
+*.log
+*.map

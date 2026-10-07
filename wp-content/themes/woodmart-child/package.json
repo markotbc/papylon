@@ -1,0 +1,21 @@
+{
+  "name": "woodmart-child",
+  "version": "1.0.0",
+  "description": "Woodmart child theme with Gulp 5 and @use/@forward SCSS",
+  "private": true,
+  "scripts": {
+    "start": "gulp",
+    "build": "gulp build",
+    "build:production": "gulp build:production"
+  },
+  "devDependencies": {
+    "browser-sync": "^2.29.3",
+    "gulp": "5.0.1",
+    "gulp-autoprefixer": "^8.0.0",
+    "gulp-clean-css": "^4.3.0",
+    "gulp-sass": "6.0.1",
+    "gulp-sourcemaps": "^3.0.0",
+    "gulp-uglify": "^3.0.2",
+    "sass": "1.91.0"
+  }
+}
