@@ -60,29 +60,39 @@ jobs:
           name: wp-content
           path: wp-content
 
-      - name: Set up SSH
+      - name: Set up SSH key
+        env:
+          SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
+          SSH_KNOWN_HOSTS: ${{ secrets.SSH_KNOWN_HOSTS }}
         run: |
           install -m 700 -d ~/.ssh
-          echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/id_deploy
+          printf '%s\n' "$SSH_PRIVATE_KEY" > ~/.ssh/id_deploy
           chmod 600 ~/.ssh/id_deploy
-          echo "${{ secrets.SSH_KNOWN_HOSTS }}" > ~/.ssh/known_hosts
+          printf '%s\n' "$SSH_KNOWN_HOSTS" > ~/.ssh/known_hosts
 
       - name: Rsync theme and plugin
         env:
-          SSH: ssh -i ~/.ssh/id_deploy -p ${{ secrets.SSH_PORT || 22 }}
-          DEST: ${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }}:${{ secrets.WP_PATH }}/wp-content
+          HOST: ${{ secrets.SSH_HOST }}
+          USER: ${{ secrets.SSH_USER }}
+          PORT: ${{ secrets.SSH_PORT || 222 }}
+          WP_PATH: ${{ secrets.WP_PATH }}
         run: |
-          rsync -az --delete -e "$SSH" \
-            wp-content/themes/woodmart-child/ "$DEST/themes/woodmart-child/"
-          rsync -az --delete -e "$SSH" \
-            wp-content/plugins/papylon-sync/ "$DEST/plugins/papylon-sync/"
+          test -n "$HOST" && test -n "$USER" && test -n "$WP_PATH" || { echo "Missing SSH_HOST / SSH_USER / WP_PATH secret"; exit 1; }
+          SSH="ssh -i $HOME/.ssh/id_deploy -p $PORT -o IdentitiesOnly=yes -o UserKnownHostsFile=$HOME/.ssh/known_hosts -o StrictHostKeyChecking=yes"
+          DEST="$USER@$HOST:$WP_PATH/wp-content"
+          rsync -az --delete -e "$SSH" wp-content/themes/woodmart-child/ "$DEST/themes/woodmart-child/"
+          rsync -az --delete -e "$SSH" wp-content/plugins/papylon-sync/ "$DEST/plugins/papylon-sync/"
 
       - name: Post-deploy (flush caches, optional)
         continue-on-error: true
+        env:
+          HOST: ${{ secrets.SSH_HOST }}
+          USER: ${{ secrets.SSH_USER }}
+          PORT: ${{ secrets.SSH_PORT || 222 }}
+          WP_PATH: ${{ secrets.WP_PATH }}
         run: |
-          ssh -i ~/.ssh/id_deploy -p ${{ secrets.SSH_PORT || 22 }} \
-            ${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }} \
-            'export PATH="$HOME/bin:$PATH"; command -v wp >/dev/null || { echo "wp-cli not installed, skipping"; exit 0; }; cd ${{ secrets.WP_PATH }} && wp cache flush && wp rewrite flush && (wp litespeed-purge all 2>/dev/null || true)'
+          ssh -i $HOME/.ssh/id_deploy -p $PORT -o UserKnownHostsFile=$HOME/.ssh/known_hosts "$USER@$HOST" \
+            "export PATH=\"\$HOME/bin:\$PATH\"; command -v wp >/dev/null || { echo 'wp-cli not installed, skipping'; exit 0; }; cd $WP_PATH && wp cache flush && wp rewrite flush"
 
       - name: Health check
         run: |
