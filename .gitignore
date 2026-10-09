@@ -13,7 +13,6 @@ wp-content/cache/
 wp-content/upgrade/
 wp-content/index.php
 wp-content/plugins/*
-!wp-content/plugins/papylon-sync/
 wp-content/themes/*
 !wp-content/themes/woodmart-child/
 
