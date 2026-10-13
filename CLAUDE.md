@@ -44,12 +44,14 @@ Test with `npm run build` before suggesting a commit.
 
 - `wp-config.php` is never in Git.
 - Locally, use test emails and test payments only, never real ones.
+- Local site folder: `/home/hannibal/Local Sites/papylon/app/public`. The theme in the repo is symlinked into its `wp-content/themes/`, so edits in the repo show up in Local immediately.
 
 ## Git workflow
 
 - `main` = production-ready, `dev` = staging. Both are permanent. **Never delete `dev`.**
 - Branch from `dev` (`feature/xyz`), then PR into `dev` (the merge deploys staging), then PR `dev` → `main` for a release.
 - Remote: `git@github.com:markotbc/papylon.git` (SSH).
+- Any push to `dev` deploys to staging immediately (rsync with `--delete`). Treat a push to `dev` as a deploy.
 
 ## CI/CD (`.github/workflows/deploy.yml`)
 
