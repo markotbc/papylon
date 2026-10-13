@@ -8,7 +8,6 @@ on:
 
 env:
   THEME_DIR: wp-content/themes/woodmart-child
-  PLUGIN_DIR: wp-content/plugins/papylon-sync
 
 jobs:
   build:
@@ -19,11 +18,11 @@ jobs:
 
       - uses: shivammathur/setup-php@v2
         with:
-          php-version: '8.2'
+          php-version: "8.2"
 
       - name: PHP syntax check
         run: |
-          find "$THEME_DIR" "$PLUGIN_DIR" -name '*.php' -not -path '*/node_modules/*' -print0 \
+          find "$THEME_DIR" -name '*.php' -not -path '*/node_modules/*' -print0 \
             | xargs -0 -n1 php -l > /dev/null
 
       - uses: actions/setup-node@v4
@@ -70,7 +69,7 @@ jobs:
           chmod 600 ~/.ssh/id_deploy
           printf '%s\n' "$SSH_KNOWN_HOSTS" > ~/.ssh/known_hosts
 
-      - name: Rsync theme and plugin
+      - name: Rsync theme
         env:
           HOST: ${{ secrets.SSH_HOST }}
           USER: ${{ secrets.SSH_USER }}
@@ -81,7 +80,6 @@ jobs:
           SSH="ssh -i $HOME/.ssh/id_deploy -p $PORT -o IdentitiesOnly=yes -o UserKnownHostsFile=$HOME/.ssh/known_hosts -o StrictHostKeyChecking=yes"
           DEST="$USER@$HOST:$WP_PATH/wp-content"
           rsync -az --delete -e "$SSH" wp-content/themes/woodmart-child/ "$DEST/themes/woodmart-child/"
-          rsync -az --delete -e "$SSH" wp-content/plugins/papylon-sync/ "$DEST/plugins/papylon-sync/"
 
       - name: Post-deploy (flush caches, optional)
         continue-on-error: true
