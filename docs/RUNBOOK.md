@@ -43,16 +43,16 @@ Add new JS files in `assets/src/js` and add their handle to the `foreach` array 
 ## 3. Deploy (what CI does)
 
 1. Build: PHP syntax check, `npm ci && npm run build:production` in the theme. Pull requests stop here.
-2. On push: `rsync -az --delete` over SSH (port 222) of the theme to `$WP_PATH/wp-content/themes/woodmart-child/`.
+2. On push: `rsync -az --delete` over SSH (port 222) of the theme to `$WP_PATH/wp-content/themes/woodmart-child/` and of the plugin to `$WP_PATH/wp-content/plugins/papylon-pangraf-sync/`. Other plugins are not touched.
 3. `wp cache flush && wp rewrite flush` via WP-CLI (`~/bin/wp`). Skipped if WP-CLI is missing.
 4. Health check: `SITE_URL` must return HTTP 200.
 
-Because of `--delete`, never edit theme files directly on the server. They are overwritten on the next deploy.
+Because of `--delete`, never edit theme or plugin files directly on the server. They are overwritten on the next deploy.
 
 ## 4. Server setup
 
 1. Hosting: Hetzner shared hosting. Staging lives in `public_html/papylon-staging`.
-2. Install WordPress + the **Woodmart parent theme** (premium, licence from ThemeForest) + WooCommerce and other plugins manually, once per environment. These are **not** in Git. Plugin settings live in the database.
+2. Install WordPress + the **Woodmart parent theme** (premium, licence from ThemeForest) + WooCommerce and other third-party plugins manually, once per environment. These are **not** in Git. Plugin settings live in the database.
 3. WP-CLI is installed at `~/bin/wp`.
 4. `wp-config.php` (per environment, never in Git):
 
@@ -65,7 +65,8 @@ define('WP_AUTO_UPDATE_CORE', 'minor');
 
 5. Staging: protect with HTTP basic auth, and turn ON `Settings → Reading → Discourage search engines`.
 6. Backups: daily DB + `uploads` backup with an off-server copy. Test a restore once. Back up before any WooCommerce / Woodmart update (they can change the database).
-7. First deploy: activate the theme "Woodmart Child" in wp-admin.
+7. First deploy: activate the theme "Woodmart Child" and the plugin "Papylon Pangraf Sync" in wp-admin.
+8. Configure **WooCommerce → Pangraf sync**: API URL, token, supplier IDs (`id_dobavljac`), `id_m` values, image URL pattern, schedule. Use **Test connection**, then **Run sync now** once before enabling the schedule. The token can instead be set in `wp-config.php` as `define('PAPYLON_PANGRAF_TOKEN', '...');`.
 
 ---
 

@@ -3,6 +3,9 @@ node_modules/
 wp-content/themes/woodmart-child/assets/dest/css/*
 !wp-content/themes/woodmart-child/assets/dest/css/.gitkeep
 
+# Local working files (scripts, exports; may contain credentials)
+files/
+
 # Never commit WordPress core, uploads, config or secrets
 wp-config.php
 .env
@@ -13,6 +16,7 @@ wp-content/cache/
 wp-content/upgrade/
 wp-content/index.php
 wp-content/plugins/*
+!wp-content/plugins/papylon-pangraf-sync/
 wp-content/themes/*
 !wp-content/themes/woodmart-child/
 
