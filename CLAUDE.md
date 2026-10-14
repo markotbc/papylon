@@ -3,11 +3,13 @@
 WooCommerce shop on WordPress with the premium **Woodmart** theme. This repo is **not** a full WordPress install. It contains only our own code:
 
 - `wp-content/themes/woodmart-child/` – our child theme (parent `woodmart` is NOT in the repo)
+- `wp-content/plugins/papylon-pangraf-sync/` – our custom plugin (Pangraf → WooCommerce product import)
 - `.github/workflows/deploy.yml` – CI/CD
 - `docs/RUNBOOK.md` – setup, secrets, deploy, server setup, rollback; DNS/launch/post-launch sections are future reference for production
 - `README.md`, `.gitignore`
+- `files/` – local working files (old scripts, exports). **Git-ignored, may contain credentials. Never commit or copy secrets out of it.**
 
-WordPress core, Woodmart, WooCommerce and all other plugins are installed by hand on each server and are git-ignored on purpose. Don't add them to Git unless asked.
+WordPress core, Woodmart, WooCommerce and all third-party plugins are installed by hand on each server and are git-ignored on purpose. Don't add them to Git unless asked.
 
 ## Child theme (`wp-content/themes/woodmart-child`)
 
@@ -21,6 +23,14 @@ WordPress core, Woodmart, WooCommerce and all other plugins are installed by han
   - auto-loads every `inc/*.php` file (top level only). Put new PHP helpers and shortcodes there.
 - **New JS file:** create `assets/src/js/<name>.js` and add `<name>` to the `foreach` list in `functions.php`.
 - Gulp also live-reloads `inc/shortcodes/**/assets/**/*.{js,css}`. That is the place for shortcode-specific assets.
+
+## Plugin: Papylon Pangraf Sync (`wp-content/plugins/papylon-pangraf-sync`)
+
+- Replaces the old cron script (`files/comtrade5793.php`) that pushed products to the live shop via the WC REST API. The plugin runs inside WordPress and uses WooCommerce CRUD, so it needs no REST keys.
+- Admin page: **WooCommerce → Pangraf sync**. Settings live in the option `papylon_pangraf_sync_settings` (DB, not Git): API URL, token (or `PAPYLON_PANGRAF_TOKEN` in `wp-config.php`), supplier IDs (`id_dobavljac`), `id_m` for products/prices and for stock, image URL pattern (`{id_item}`, `{code}`), category mode, schedule, batch size.
+- Scheduling uses WooCommerce's Action Scheduler (group `papylon-pangraf-sync`): a recurring `papylon_pangraf_sync_run` fetches both lists and stores a queue, then chained `papylon_pangraf_sync_batch` actions import it. Logs: WooCommerce → Status → Logs (source `papylon-pangraf-sync`).
+- Product SKU = Pangraf `id_item`. Meta: `_wpm_gtin_code` (EAN), `_pangraf_code`, `_pangraf_image_url`. Products missing from the feed are not touched.
+- No build step. `includes/` holds one class per file (settings, API, sync, admin).
 
 ## Commands (run in the theme folder)
 
@@ -44,7 +54,7 @@ Test with `npm run build` before suggesting a commit.
 
 - `wp-config.php` is never in Git.
 - Locally, use test emails and test payments only, never real ones.
-- Local site folder: `/home/hannibal/Local Sites/papylon/app/public`. The theme in the repo is symlinked into its `wp-content/themes/`, so edits in the repo show up in Local immediately.
+- Local site folder: `/home/hannibal/Local Sites/papylon/app/public`. The theme in the repo is symlinked into its `wp-content/themes/`, so edits in the repo show up in Local immediately. The plugin is symlinked the same way into its `wp-content/plugins/`.
 
 ## Git workflow
 
@@ -56,19 +66,19 @@ Test with `npm run build` before suggesting a commit.
 ## CI/CD (`.github/workflows/deploy.yml`)
 
 - Triggers: push and PR on `dev`/`main`. **PRs run the build only (no deploy).**
-- **Build job:** `php -l` on all theme PHP (PHP 8.2), then `npm ci` and `npm run build:production` (Node 20), then uploads `wp-content` as an artifact.
+- **Build job:** `php -l` on all theme and plugin PHP (PHP 8.2), then `npm ci` and `npm run build:production` (Node 20), then uploads `wp-content` as an artifact.
 - **Deploy job** (push only): `dev` → `staging` environment. `main` → `production` environment, but only when the repo variable `PRODUCTION_ENABLED == 'true'`.
-  - `rsync -az --delete` of the theme folder over SSH to `$WP_PATH/wp-content/themes/woodmart-child/`
+  - `rsync -az --delete` over SSH of the theme to `$WP_PATH/wp-content/themes/woodmart-child/` and of the plugin to `$WP_PATH/wp-content/plugins/papylon-pangraf-sync/` (only those two folders)
   - `wp cache flush && wp rewrite flush` if WP-CLI exists (`~/bin/wp`, non-fatal)
   - HTTP health check on `vars.SITE_URL` (must return 200)
 - Per-environment secrets: `SSH_HOST`, `SSH_USER`, `SSH_PORT` (defaults to 222), `SSH_PRIVATE_KEY`, `SSH_KNOWN_HOSTS`, `WP_PATH`. Variable: `SITE_URL`. **Never write secret values anywhere in the repo.**
 - Hetzner quirk: SSH for commands is on **port 222**. Port 22 is SFTP-only.
-- The theme folder is overwritten with `--delete` on every deploy, so **never edit theme files directly on a server**.
+- The theme and plugin folders are overwritten with `--delete` on every deploy, so **never edit their files directly on a server**.
 
 ## Rules
 
 - Never commit built files, secrets, `wp-config.php`, `.env`, DB dumps (`*.sql*`) or uploads.
-- Third-party plugins are installed manually per environment and not tracked. Their settings live in the DB. **Ask before tracking any plugin**: it needs `.gitignore` and workflow changes, and `--delete` could wipe untracked files on the server.
+- Third-party plugins are installed manually per environment and not tracked. Their settings live in the DB. **Ask before tracking any other plugin**: it needs `.gitignore` and workflow changes, and `--delete` could wipe untracked files on the server.
 - Before committing: run `git status` and tell the user what's included. **Don't push (especially to `main`) without asking.**
 - Prefer small, reviewable changes.
 - WooCommerce and Woodmart updates can change the DB. Warn the user and suggest a backup before any update-related work.
@@ -77,5 +87,6 @@ Test with `npm run build` before suggesting a commit.
 ## Known gaps / TODO
 
 - Production doesn't exist yet. It needs a `production` GitHub environment (with required reviewers), its secrets, `SITE_URL`, and `PRODUCTION_ENABLED=true`.
-- There is no custom plugin at the moment.
+- The old Pangraf cron script still runs against the live shop (papylon.me, separate from this setup). Retire it, and revoke its WC REST keys, only once the plugin is verified.
+- After the first staging deploy, activate the plugin in wp-admin and enter its settings there.
 - Third-party plugins (WooCommerce etc.) and the Woodmart parent theme are installed by hand on each environment. They are not in Git.
