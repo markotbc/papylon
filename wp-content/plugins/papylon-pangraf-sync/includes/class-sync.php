@@ -17,7 +17,8 @@ class Papylon_Pangraf_Sync {
 	const STATUS_OPTION = 'papylon_pangraf_sync_status';
 	const STALE_AFTER   = 3 * HOUR_IN_SECONDS;
 
-	private static $category_cache = array();
+	private static $group_map        = null;
+	private static $group_term_cache = array();
 
 	public static function init() {
 		add_action( self::RUN_HOOK, array( __CLASS__, 'start' ) );
@@ -143,6 +144,7 @@ class Papylon_Pangraf_Sync {
 				'ean'         => (string) ( $p['ean'] ?? '' ),
 				'code'        => (string) ( $p['code'] ?? '' ),
 				'group'       => (string) ( $p['group'] ?? '' ),
+				'group_id'    => (int) ( $p['id_group'] ?? 0 ),
 				'qty'         => $stock[ $sku ] ?? 0,
 			);
 		}
@@ -270,10 +272,10 @@ class Papylon_Pangraf_Sync {
 			$product->update_meta_data( '_pangraf_code', $item['code'] );
 		}
 
-		if ( 'assign' === $s['categories'] && '' !== $item['group'] ) {
-			$term_id = self::category_id( $item['group'] );
-			if ( $term_id ) {
-				$product->set_category_ids( array( $term_id ) );
+		if ( 'assign' === $s['categories'] ) {
+			$term_ids = self::category_ids( $item );
+			if ( $term_ids ) {
+				$product->set_category_ids( $term_ids );
 			}
 		}
 
@@ -320,27 +322,149 @@ class Papylon_Pangraf_Sync {
 		return true;
 	}
 
+	/* ---------- Categories ---------- */
+
 	/**
-	 * product_cat term id for a Pangraf group name, created if missing.
+	 * Group tree from includes/groups-map.php: id_group => array( name, parent ).
 	 */
-	private static function category_id( $name ) {
-		if ( isset( self::$category_cache[ $name ] ) ) {
-			return self::$category_cache[ $name ];
+	private static function group_map() {
+		if ( null === self::$group_map ) {
+			$file            = __DIR__ . '/groups-map.php';
+			$map             = file_exists( $file ) ? include $file : array();
+			self::$group_map = apply_filters( 'papylon_pangraf_group_map', is_array( $map ) ? $map : array() );
+		}
+		return self::$group_map;
+	}
+
+	/**
+	 * product_cat term ids for a product: its subcategory plus (by default) every parent above it.
+	 * Falls back to a top-level category named after the API "group" when the id is not in the map.
+	 *
+	 * @return int[]
+	 */
+	private static function category_ids( array $item ) {
+		$map      = self::group_map();
+		$group_id = (int) ( $item['group_id'] ?? 0 );
+
+		if ( $group_id && isset( $map[ $group_id ] ) ) {
+			$ids = array();
+			$gid = $group_id;
+			$depth = 0;
+			while ( $gid && isset( $map[ $gid ] ) && $depth++ < 5 ) {
+				$term_id = self::resolve_group( $gid, $map );
+				if ( $term_id ) {
+					$ids[] = $term_id;
+				}
+				$gid = (int) $map[ $gid ]['parent'];
+			}
+
+			if ( ! apply_filters( 'papylon_pangraf_assign_parent_categories', true ) ) {
+				$ids = array_slice( $ids, 0, 1 );
+			}
+			return array_values( array_unique( $ids ) );
 		}
 
-		$term = get_term_by( 'name', $name, 'product_cat' );
-		if ( $term ) {
-			$id = (int) $term->term_id;
-		} else {
-			$res = wp_insert_term( $name, 'product_cat' );
-			if ( is_wp_error( $res ) ) {
-				$id = (int) $res->get_error_data( 'term_exists' );
-			} else {
-				$id = (int) $res['term_id'];
+		if ( '' !== $item['group'] ) {
+			$term_id = self::find_or_create_term( 0, $item['group'], 0 );
+			return $term_id ? array( $term_id ) : array();
+		}
+
+		return array();
+	}
+
+	/**
+	 * Term id for one Pangraf group, creating its parents first.
+	 */
+	private static function resolve_group( $group_id, array $map, $depth = 0 ) {
+		if ( isset( self::$group_term_cache[ $group_id ] ) ) {
+			return self::$group_term_cache[ $group_id ];
+		}
+		if ( ! isset( $map[ $group_id ] ) || $depth > 5 ) {
+			return 0;
+		}
+
+		$parent_gid  = (int) $map[ $group_id ]['parent'];
+		$parent_term = $parent_gid ? self::resolve_group( $parent_gid, $map, $depth + 1 ) : 0;
+
+		$term_id = self::find_or_create_term( $group_id, $map[ $group_id ]['name'], $parent_term );
+
+		self::$group_term_cache[ $group_id ] = $term_id;
+		return $term_id;
+	}
+
+	/**
+	 * Find the product_cat term for a group (by stored group id, then name + parent, then an old
+	 * flat top-level category of the same name), or create it under $parent_term.
+	 */
+	private static function find_or_create_term( $group_id, $name, $parent_term ) {
+		$base = array(
+			'taxonomy'   => 'product_cat',
+			'hide_empty' => false,
+			'fields'     => 'ids',
+			'number'     => 1,
+		);
+
+		// 1. Already linked to this Pangraf group id.
+		if ( $group_id ) {
+			$found = get_terms( $base + array( 'meta_key' => '_pangraf_group_id', 'meta_value' => $group_id ) );
+			if ( ! is_wp_error( $found ) && $found ) {
+				$term_id = (int) $found[0];
+				self::ensure_parent( $term_id, $parent_term );
+				return $term_id;
 			}
 		}
 
-		self::$category_cache[ $name ] = $id;
-		return $id;
+		// 2. Same name under the right parent.
+		$found = get_terms( $base + array( 'name' => $name, 'parent' => $parent_term ) );
+		if ( ! is_wp_error( $found ) && $found ) {
+			$term_id = (int) $found[0];
+			self::link_term( $term_id, $group_id );
+			return $term_id;
+		}
+
+		// 3. Category created earlier as a flat top-level one (old behaviour): move it under its parent.
+		if ( $parent_term && apply_filters( 'papylon_pangraf_adopt_flat_categories', true ) ) {
+			$found = get_terms(
+				$base + array(
+					'name'       => $name,
+					'parent'     => 0,
+					'meta_query' => array( array( 'key' => '_pangraf_group_id', 'compare' => 'NOT EXISTS' ) ),
+				)
+			);
+			if ( ! is_wp_error( $found ) && $found ) {
+				$term_id = (int) $found[0];
+				self::ensure_parent( $term_id, $parent_term );
+				self::link_term( $term_id, $group_id );
+				return $term_id;
+			}
+		}
+
+		// 4. Create it.
+		$res = wp_insert_term( $name, 'product_cat', array( 'parent' => $parent_term ) );
+		if ( is_wp_error( $res ) ) {
+			$term_id = (int) $res->get_error_data( 'term_exists' );
+			if ( ! $term_id ) {
+				self::log( sprintf( 'Category "%s" could not be created: %s', $name, $res->get_error_message() ), 'warning' );
+				return 0;
+			}
+		} else {
+			$term_id = (int) $res['term_id'];
+		}
+
+		self::link_term( $term_id, $group_id );
+		return $term_id;
+	}
+
+	private static function link_term( $term_id, $group_id ) {
+		if ( $group_id && $term_id ) {
+			update_term_meta( $term_id, '_pangraf_group_id', (int) $group_id );
+		}
+	}
+
+	private static function ensure_parent( $term_id, $parent_term ) {
+		$term = get_term( $term_id, 'product_cat' );
+		if ( $term && ! is_wp_error( $term ) && (int) $term->parent !== (int) $parent_term ) {
+			wp_update_term( $term_id, 'product_cat', array( 'parent' => (int) $parent_term ) );
+		}
 	}
 }
