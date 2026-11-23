@@ -195,7 +195,7 @@ class Papylon_Pangraf_Admin {
 						<th scope="row"><?php esc_html_e( 'Categories', 'papylon-pangraf-sync' ); ?></th>
 						<td>
 							<label><input type="radio" name="<?php echo esc_attr( $name ); ?>[categories]" value="ignore" <?php checked( $s['categories'], 'ignore' ); ?>> <?php esc_html_e( 'Don\'t change product categories', 'papylon-pangraf-sync' ); ?></label><br>
-							<label><input type="radio" name="<?php echo esc_attr( $name ); ?>[categories]" value="assign" <?php checked( $s['categories'], 'assign' ); ?>> <?php esc_html_e( 'Set category from Pangraf "group" (created if missing; replaces existing categories)', 'papylon-pangraf-sync' ); ?></label>
+							<label><input type="radio" name="<?php echo esc_attr( $name ); ?>[categories]" value="assign" <?php checked( $s['categories'], 'assign' ); ?>> <?php esc_html_e( 'Set category and parent category from Pangraf "id_group" using includes/groups-map.php (created if missing; replaces existing categories)', 'papylon-pangraf-sync' ); ?></label>
 						</td>
 					</tr>
 					<tr>

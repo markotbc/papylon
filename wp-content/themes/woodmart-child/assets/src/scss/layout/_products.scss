@@ -1,0 +1,12 @@
+.wd-product {
+  .product-element-top {
+    > a {
+      &.wd-product-img-link,
+      &.product-image-link {
+        display: block;
+        aspect-ratio: 1 / 1; // match your usual book cover ratio
+        overflow: hidden;
+      }
+    }
+  }
+}
