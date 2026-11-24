@@ -35,17 +35,18 @@ class Papylon_Pangraf_API {
 			$this->url
 		);
 
+		$body = array( 'id_m' => (int) $id_m );
+		// Empty list = no supplier filter (Pangraf then returns every item of the work unit).
+		if ( $supplier_ids ) {
+			$body = array( 'id_dobavljac' => array_values( array_map( 'intval', $supplier_ids ) ) ) + $body;
+		}
+
 		$response = wp_remote_post(
 			$url,
 			array(
-				'timeout' => 120,
+				'timeout' => 240,
 				'headers' => array( 'Content-Type' => 'application/json' ),
-				'body'    => wp_json_encode(
-					array(
-						'id_dobavljac' => array_values( array_map( 'intval', $supplier_ids ) ),
-						'id_m'         => (int) $id_m,
-					)
-				),
+				'body'    => wp_json_encode( $body ),
 			)
 		);
 

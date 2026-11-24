@@ -13,9 +13,11 @@ class Papylon_Pangraf_Sync {
 	const GROUP         = 'papylon-pangraf-sync';
 	const RUN_HOOK      = 'papylon_pangraf_sync_run';
 	const BATCH_HOOK    = 'papylon_pangraf_sync_batch';
+	const FETCH_HOOK    = 'papylon_pangraf_sync_fetch';
+	const BUILD_HOOK    = 'papylon_pangraf_sync_build';
 	const QUEUE_OPTION  = 'papylon_pangraf_sync_queue';
 	const STATUS_OPTION = 'papylon_pangraf_sync_status';
-	const STALE_AFTER   = 3 * HOUR_IN_SECONDS;
+	const STALE_AFTER   = 20 * MINUTE_IN_SECONDS; // a run with no progress for this long is considered dead.
 
 	private static $group_map        = null;
 	private static $group_term_cache = array();
@@ -23,6 +25,8 @@ class Papylon_Pangraf_Sync {
 	public static function init() {
 		add_action( self::RUN_HOOK, array( __CLASS__, 'start' ) );
 		add_action( self::BATCH_HOOK, array( __CLASS__, 'process_batch' ) );
+		add_action( self::FETCH_HOOK, array( __CLASS__, 'fetch_unit' ) );
+		add_action( self::BUILD_HOOK, array( __CLASS__, 'build_queue' ) );
 
 		// Any settings save re-creates the recurring action.
 		add_action( 'add_option_' . Papylon_Pangraf_Settings::OPTION, array( __CLASS__, 'reschedule' ) );
@@ -82,10 +86,12 @@ class Papylon_Pangraf_Sync {
 
 	public static function is_running() {
 		$status = self::status();
-		return ! empty( $status['state'] ) && 'running' === $status['state'] && $status['started'] > time() - self::STALE_AFTER;
+		$last = (int) ( $status['heartbeat'] ?? $status['started'] ?? 0 );
+		return ! empty( $status['state'] ) && 'running' === $status['state'] && $last > time() - self::STALE_AFTER;
 	}
 
 	private static function save_status( array $status ) {
+		$status['heartbeat'] = time();
 		update_option( self::STATUS_OPTION, $status, false );
 	}
 
@@ -95,45 +101,154 @@ class Papylon_Pangraf_Sync {
 
 	/* ---------- Run ---------- */
 
+	/**
+	 * Step 1: set up the run and schedule the first fetch. Every work unit is fetched in its own
+	 * action (the lists are huge), then one action builds the import queue.
+	 */
 	public static function start() {
 		if ( self::is_running() ) {
 			self::log( 'Skipped: previous run is still in progress.', 'warning' );
 			return;
 		}
 
-		$s = Papylon_Pangraf_Settings::get();
-		if ( ! $s['supplier_ids'] ) {
-			self::fail( __( 'No supplier IDs (id_dobavljac) configured.', 'papylon-pangraf-sync' ) );
-			return;
-		}
+		$s         = Papylon_Pangraf_Settings::get();
+		$stock_ids = array_map( 'intval', $s['stock_ids'] );
+		$price_id  = (int) $s['price_id_m'];
 
-		$api   = new Papylon_Pangraf_API( $s['api_url'], Papylon_Pangraf_Settings::token(), $s['protocol'] );
-		$items = $api->get_items( $s['supplier_ids'], $s['price_id_m'] );
-		if ( is_wp_error( $items ) ) {
-			self::fail( 'Products: ' . $items->get_error_message() );
-			return;
-		}
-
-		$stock_rows = $api->get_items( $s['supplier_ids'], $s['stock_id_m'] );
-		if ( is_wp_error( $stock_rows ) ) {
-			self::fail( 'Stock: ' . $stock_rows->get_error_message() );
-			return;
-		}
-
-		// id_item => quantity (first match wins, like the old script).
-		$stock = array();
-		foreach ( $stock_rows as $row ) {
-			$key = (string) ( $row['id_item'] ?? '' );
-			if ( '' !== $key && ! isset( $stock[ $key ] ) ) {
-				$qty           = trim( (string) ( $row['quantity'] ?? '' ) );
-				$stock[ $key ] = is_numeric( $qty ) ? (int) $qty : 0;
+		// The price unit comes first (its product data is used), then the other stock units.
+		$units = array( array( 'id' => $price_id, 'stock' => in_array( $price_id, $stock_ids, true ) ) );
+		foreach ( $stock_ids as $id ) {
+			if ( $id !== $price_id ) {
+				$units[] = array( 'id' => $id, 'stock' => true );
 			}
 		}
 
+		self::tmp_clear();
+		delete_option( self::QUEUE_OPTION );
+		self::tmp_clear();
+
+		$status = array(
+			'state'     => 'running',
+			'started'   => time(),
+			'finished'  => 0,
+			'units'     => $units,
+			'total'     => 0,
+			'batch'     => (int) $s['batch_size'],
+			'processed' => 0,
+			'created'   => 0,
+			'updated'   => 0,
+			'failed'    => 0,
+			'images'    => 0,
+			'message'   => '',
+		);
+		self::save_status( $status );
+		self::log( sprintf( 'Run started: fetching %d work units.', count( $units ) ) );
+
+		as_enqueue_async_action( self::FETCH_HOOK, array( 0 ), self::GROUP );
+	}
+
+	/**
+	 * Step 2 (once per work unit): download one unit and keep only a compact copy in a temp file.
+	 */
+	public static function fetch_unit( $index ) {
+		$status = self::status();
+		if ( empty( $status['state'] ) || 'running' !== $status['state'] || ! isset( $status['units'][ $index ] ) ) {
+			return;
+		}
+
+		wp_raise_memory_limit( 'admin' );
+
+		$s       = Papylon_Pangraf_Settings::get();
+		$api     = new Papylon_Pangraf_API( $s['api_url'], Papylon_Pangraf_Settings::token(), $s['protocol'] );
+		$unit_id = (int) $status['units'][ $index ]['id'];
+
+		$rows = $api->get_items( $s['supplier_ids'], $unit_id );
+		if ( is_wp_error( $rows ) ) {
+			self::fail( sprintf( 'Work unit %d: %s', $unit_id, $rows->get_error_message() ) );
+			return;
+		}
+
+		$fields = array_flip( array( 'id_item', 'name', 'price', 'description', 'ean', 'code', 'group', 'id_group' ) );
+		$data   = array();
+		foreach ( $rows as $row ) {
+			$key = (string) ( $row['id_item'] ?? '' );
+			if ( '' === $key || isset( $data[ $key ] ) ) {
+				continue; // first row per item within a unit wins, like the old script.
+			}
+			$qty = trim( (string) ( $row['quantity'] ?? '' ) );
+			$q   = is_numeric( $qty ) ? (int) $qty : 0;
+
+			if ( 0 === (int) $index ) {
+				$data[ $key ]      = array_intersect_key( $row, $fields );
+				$data[ $key ]['q'] = $q;
+			} else {
+				$data[ $key ] = array( $q, (float) ( $row['price'] ?? 0 ) );
+			}
+		}
+		unset( $rows );
+
+		if ( ! self::tmp_write( 'unit-' . (int) $index . '.json', $data ) ) {
+			self::fail( 'Could not write temporary files to the uploads folder.' );
+			return;
+		}
+
+		self::log( sprintf( 'Work unit %d fetched: %d items.', $unit_id, count( $data ) ) );
+		self::save_status( $status ); // refresh heartbeat.
+
+		if ( $index + 1 < count( $status['units'] ) ) {
+			as_enqueue_async_action( self::FETCH_HOOK, array( $index + 1 ), self::GROUP );
+		} else {
+			as_enqueue_async_action( self::BUILD_HOOK, array(), self::GROUP );
+		}
+	}
+
+	/**
+	 * Step 3: merge the unit files into the import queue (stock summed over the stock units).
+	 */
+	public static function build_queue() {
+		$status = self::status();
+		if ( empty( $status['state'] ) || 'running' !== $status['state'] ) {
+			return;
+		}
+
+		wp_raise_memory_limit( 'admin' );
+
+		$s     = Papylon_Pangraf_Settings::get();
+		$items = self::tmp_read( 'unit-0.json' );
+		if ( ! is_array( $items ) ) {
+			self::fail( 'Temporary data for the price unit is missing.' );
+			return;
+		}
+
+		$stock = array();
+		foreach ( $status['units'] as $i => $unit ) {
+			$data = 0 === $i ? $items : self::tmp_read( 'unit-' . $i . '.json' );
+			if ( ! is_array( $data ) ) {
+				continue;
+			}
+			foreach ( $data as $key => $row ) {
+				if ( $unit['stock'] ) {
+					$stock[ $key ] = ( $stock[ $key ] ?? 0 ) + ( 0 === $i ? (int) $row['q'] : (int) $row[0] );
+				}
+				// No price in the price unit: take the first price found in another unit.
+				if ( $i > 0 && isset( $items[ $key ] ) && (float) ( $items[ $key ]['price'] ?? 0 ) <= 0 && $row[1] > 0 ) {
+					$items[ $key ]['price'] = $row[1];
+				}
+			}
+			unset( $data );
+		}
+
+		// Optionally leave out items that have no stock anywhere and are not on the site yet.
+		$existing = array();
+		if ( ! empty( $s['only_in_stock'] ) ) {
+			global $wpdb;
+			$existing = array_flip( $wpdb->get_col( "SELECT meta_value FROM {$wpdb->postmeta} WHERE meta_key = '_sku' AND meta_value <> ''" ) );
+		}
+
 		$queue = array();
-		foreach ( $items as $p ) {
-			$sku = (string) ( $p['id_item'] ?? '' );
-			if ( '' === $sku ) {
+		foreach ( $items as $sku => $p ) {
+			$sku = (string) $sku;
+			if ( ! empty( $s['only_in_stock'] ) && ( $stock[ $sku ] ?? 0 ) <= 0 && ! isset( $existing[ $sku ] ) ) {
 				continue;
 			}
 			$queue[] = array(
@@ -148,23 +263,13 @@ class Papylon_Pangraf_Sync {
 				'qty'         => $stock[ $sku ] ?? 0,
 			);
 		}
+		unset( $items, $stock, $existing );
+		self::tmp_clear();
 
 		update_option( self::QUEUE_OPTION, $queue, false );
-		$status = array(
-			'state'     => 'running',
-			'started'   => time(),
-			'finished'  => 0,
-			'total'     => count( $queue ),
-			'batch'     => (int) $s['batch_size'],
-			'processed' => 0,
-			'created'   => 0,
-			'updated'   => 0,
-			'failed'    => 0,
-			'images'    => 0,
-			'message'   => '',
-		);
+		$status['total'] = count( $queue );
 		self::save_status( $status );
-		self::log( sprintf( 'Run started: %d products from Pangraf.', count( $queue ) ) );
+		self::log( sprintf( 'Queue built: %d products to import.', count( $queue ) ) );
 
 		if ( ! $queue ) {
 			self::finish( $status );
@@ -172,6 +277,34 @@ class Papylon_Pangraf_Sync {
 		}
 
 		as_enqueue_async_action( self::BATCH_HOOK, array( 0 ), self::GROUP );
+	}
+
+	/* ---------- Temp files (big lists don't fit comfortably in the options table) ---------- */
+
+	private static function tmp_dir() {
+		$up  = wp_upload_dir();
+		$dir = trailingslashit( $up['basedir'] ) . 'papylon-pangraf-sync/';
+		if ( ! is_dir( $dir ) ) {
+			wp_mkdir_p( $dir );
+			file_put_contents( $dir . 'index.php', "<?php\n// Silence is golden.\n" );
+			file_put_contents( $dir . '.htaccess', "Deny from all\n" );
+		}
+		return $dir;
+	}
+
+	private static function tmp_write( $name, $data ) {
+		return false !== file_put_contents( self::tmp_dir() . $name, wp_json_encode( $data ) );
+	}
+
+	private static function tmp_read( $name ) {
+		$file = self::tmp_dir() . $name;
+		return file_exists( $file ) ? json_decode( (string) file_get_contents( $file ), true ) : null;
+	}
+
+	private static function tmp_clear() {
+		foreach ( (array) glob( self::tmp_dir() . 'unit-*.json' ) as $file ) {
+			@unlink( $file ); // phpcs:ignore WordPress.PHP.NoSilencedErrors
+		}
 	}
 
 	public static function process_batch( $offset ) {
@@ -213,6 +346,7 @@ class Papylon_Pangraf_Sync {
 		$status['finished'] = time();
 		self::save_status( $status );
 		delete_option( self::QUEUE_OPTION );
+		self::tmp_clear();
 
 		self::log(
 			sprintf(
@@ -237,6 +371,7 @@ class Papylon_Pangraf_Sync {
 			)
 		);
 		delete_option( self::QUEUE_OPTION );
+		self::tmp_clear();
 		self::log( 'Run failed: ' . $message, 'error' );
 	}
 
