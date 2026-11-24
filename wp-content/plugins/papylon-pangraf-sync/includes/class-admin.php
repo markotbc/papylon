@@ -166,19 +166,28 @@ class Papylon_Pangraf_Admin {
 						<td><input id="pps-protocol" type="text" class="small-text" name="<?php echo esc_attr( $name ); ?>[protocol]" value="<?php echo esc_attr( $s['protocol'] ); ?>"></td>
 					</tr>
 					<tr>
-						<th scope="row"><label for="pps-suppliers"><?php esc_html_e( 'Supplier IDs (id_dobavljac)', 'papylon-pangraf-sync' ); ?></label></th>
-						<td>
-							<textarea id="pps-suppliers" class="large-text" rows="3" name="<?php echo esc_attr( $name ); ?>[supplier_ids]"><?php echo esc_textarea( implode( ', ', $s['supplier_ids'] ) ); ?></textarea>
-							<p class="description"><?php esc_html_e( 'Comma, space or newline separated.', 'papylon-pangraf-sync' ); ?></p>
-						</td>
-					</tr>
-					<tr>
 						<th scope="row"><label for="pps-price-m"><?php esc_html_e( 'Products & prices (id_m)', 'papylon-pangraf-sync' ); ?></label></th>
 						<td><input id="pps-price-m" type="number" min="0" class="small-text" name="<?php echo esc_attr( $name ); ?>[price_id_m]" value="<?php echo esc_attr( $s['price_id_m'] ); ?>"></td>
 					</tr>
 					<tr>
+						<th scope="row"><label for="pps-suppliers"><?php esc_html_e( 'Supplier IDs (id_dobavljac)', 'papylon-pangraf-sync' ); ?></label></th>
+						<td>
+							<input id="pps-suppliers" type="text" class="large-text" name="<?php echo esc_attr( $name ); ?>[supplier_ids]" value="<?php echo esc_attr( implode( ', ', $s['supplier_ids'] ) ); ?>">
+							<p class="description"><?php esc_html_e( 'Comma separated. Only items of these suppliers are imported. Leave empty to import every item.', 'papylon-pangraf-sync' ); ?></p>
+						</td>
+					</tr>
+					<tr>
 						<th scope="row"><label for="pps-stock-m"><?php esc_html_e( 'Stock quantities (id_m)', 'papylon-pangraf-sync' ); ?></label></th>
-						<td><input id="pps-stock-m" type="number" min="0" class="small-text" name="<?php echo esc_attr( $name ); ?>[stock_id_m]" value="<?php echo esc_attr( $s['stock_id_m'] ); ?>"></td>
+						<td>
+							<input id="pps-stock-m" type="text" class="regular-text" name="<?php echo esc_attr( $name ); ?>[stock_ids]" value="<?php echo esc_attr( implode( ', ', $s['stock_ids'] ) ); ?>">
+							<p class="description"><?php esc_html_e( 'Work unit IDs (comma separated). Products are imported from all of them plus the unit above; stock is the sum across these units.', 'papylon-pangraf-sync' ); ?></p>
+						</td>
+					</tr>
+					<tr>
+						<th scope="row"><?php esc_html_e( 'Only items in stock', 'papylon-pangraf-sync' ); ?></th>
+						<td>
+							<label><input type="checkbox" name="<?php echo esc_attr( $name ); ?>[only_in_stock]" value="1" <?php checked( ! empty( $s['only_in_stock'] ) ); ?>> <?php esc_html_e( 'Create new products only if total stock is above 0. Products already on the site are always updated.', 'papylon-pangraf-sync' ); ?></label>
+						</td>
 					</tr>
 				</table>
 

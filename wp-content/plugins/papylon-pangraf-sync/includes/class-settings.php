@@ -17,9 +17,10 @@ class Papylon_Pangraf_Settings {
 			'protocol'          => '2.0',
 			'supplier_ids'      => array(),
 			'price_id_m'        => 4,
-			'stock_id_m'        => 9,
+			'stock_ids'         => array( 3, 4, 5, 6, 7, 8, 12, 9 ),
 			'image_url_pattern' => '',
 			'categories'        => 'ignore',
+			'only_in_stock'     => 1,
 			'frequency'         => 'daily',
 			'start_time'        => '03:00',
 			'batch_size'        => 25,
@@ -27,7 +28,15 @@ class Papylon_Pangraf_Settings {
 	}
 
 	public static function get() {
-		return wp_parse_args( get_option( self::OPTION, array() ), self::defaults() );
+		$saved = get_option( self::OPTION, array() );
+		$saved = is_array( $saved ) ? $saved : array();
+
+		// Settings saved before multi-unit stock support only have a single stock_id_m.
+		if ( empty( $saved['stock_ids'] ) && ! empty( $saved['stock_id_m'] ) ) {
+			$saved['stock_ids'] = array( absint( $saved['stock_id_m'] ) );
+		}
+
+		return wp_parse_args( $saved, self::defaults() );
 	}
 
 	/**
@@ -78,14 +87,15 @@ class Papylon_Pangraf_Settings {
 			$out['api_token'] = '';
 		}
 
-		$out['supplier_ids'] = self::parse_ids( $input['supplier_ids'] ?? '' );
 		$out['price_id_m']   = absint( $input['price_id_m'] ?? 4 );
-		$out['stock_id_m']   = absint( $input['stock_id_m'] ?? 9 );
+		$out['supplier_ids'] = self::parse_ids( $input['supplier_ids'] ?? '' );
+		$out['stock_ids']    = self::parse_ids( $input['stock_ids'] ?? '' ) ?: array( 9 );
 
 		// esc_url_raw() would strip the {placeholders}.
 		$pattern                  = sanitize_text_field( $input['image_url_pattern'] ?? '' );
 		$out['image_url_pattern'] = preg_match( '#^https?://#i', $pattern ) ? $pattern : '';
 
+		$out['only_in_stock'] = empty( $input['only_in_stock'] ) ? 0 : 1;
 		$out['categories'] = in_array( $input['categories'] ?? '', array( 'ignore', 'assign' ), true ) ? $input['categories'] : 'ignore';
 		$out['frequency']  = array_key_exists( $input['frequency'] ?? '', self::frequencies() ) ? $input['frequency'] : 'daily';
 		$out['start_time'] = preg_match( '/^([01]\d|2[0-3]):[0-5]\d$/', $input['start_time'] ?? '' ) ? $input['start_time'] : '03:00';
